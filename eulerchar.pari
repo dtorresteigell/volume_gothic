@@ -1,0 +1,1549 @@
+default(breakloop,0);
+default(format,"g.12");
+
+allocatemem(4096000000);
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\ Local functions \\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+doublefac(n) = {
+   return(prod(i=0,ceil(n/2)-1,n-2*i));
+}
+
+{CoefD(D)=
+local(comp);
+if(D%12==0, comp=1, if(D%24==1, comp=2, if(D%24==9, comp=4/3 , comp=3/2)));
+return(comp);
+}
+
+\\ Jordan totient function of degree 2
+{a(n) = if( n<1, 0, sumdiv(n, d, d^2 * moebius(n / d)))};
+
+\\ 5/12 * Order of SL(2,n)
+{e(n) = return(5/12*a(n)*n);};
+
+\\\\\ PROPERTIES OF e(n)
+\\\\\ e(2^k*d) = 3*2^(3k-2)*e(d)
+
+{econg(m,a) = \\ Relation between e(m) and e(m\a), for a=gcd(m,6)
+ if(a==2,
+   if( m%2!=0, return(0), if(m%4==0, return(8*e(m\2)), return(6*e(m\2)) )),
+ if(a==3,
+   if( m%3!=0, return(0), if(m%9==0, return(27*e(m\3)), return(24*e(m\3)) )),
+ if(a==6,
+   if( m%6!=0, return(0), 
+   if(gcd(m\6,6)==6, return(216*e(m\6)), 
+   if(gcd(m\6,6)==2, return(192*e(m\6)), 
+   if(gcd(m\6,6)==3, return(162*e(m\6)), 
+   if(gcd(m\6,6)==1, return(144*e(m\6)),  
+   ))))),
+ if(a==1, return(e(m));
+ ))));
+};
+
+
+
+{Zeta(n) =  \\ Dirichlet zeta series for Q(sqrt(n)) at -1
+ if(trap(,1,zetak(zetakinit(x^2-n),-1);0),return(lfun(lfuninit(x^2-n,[0,2,2]),-1)),
+ return(zetak(zetakinit(x^2-n),-1)));
+}
+
+{F(d)=
+ v2=2^valuation(d^2,2);
+ v3=3^valuation(d^2,3);
+ v6=v2*v3;
+ k2=((d%2)!=0); k3=((d%3)!=0); k6=((d%6)!=0);
+ return(VolRed(d^2,1) - k2*3/5*VolRed(d^2/v2,1) - k3*4/5*VolRed(d^2/v3,1) + k6*12/25*VolRed(d^2/v6,1));
+}
+
+{inv(d,k)=
+  return(sum(h=1,length(divisors(d)),VolRed(divisors(d)[h],k)));
+};
+
+
+
+
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+
+{ ensq(n)= \\ e_1(n) as in [Zag76] for n not a square
+  if((n%4==2)||(n%4==3), return(0));
+  f=coredisc(n,1)[2]; div=divisors(f);
+  return(Zeta(n)/2/zeta(-3) *sum(j=1,length(div), moebius(div[j])*kronecker(n,div[j])*div[j]*sigma(f/div[j],3) ));
+};
+
+{ esq(n)= \\ e_1(n) as in [Zag76] for n a square
+  local(div,d);
+  if((n%4==2)||(n%4==3)||(issquare(n)!=1), return(0));
+  d=round(sqrt(n));
+  div=divisors(d);
+  return(5/12*d^3*sum(j=1,length(div), sum(k=1,length(div), if(d%(div[j]*div[k])==0, moebius(div[j])/div[j]^2/div[k]^3 ) )));
+};
+\\ for(j=1,10, print(esq(j^2), " - ", sum(h=1,length(divisors(j)),e(divisors(j)[h]))))
+
+
+{Protk(D,k, Print=0) = \\ Calculates all [a,b,c] such that D=b^2 - 4*k*a*c, a>0>c and gcd(f,b,c/c0)=1, where c0 is the squarefree part of c
+local(a,b,c,d,div,aux);
+aux=[];
+f=coredisc(D,1)[2];
+for(b=-floor(sqrt(D)),floor(sqrt(D)),
+ if((D-b^2)%(4*k)==0 & D!=b^2, 
+  d=(D-b^2)/4/k; 
+  div=divisors(d);
+  for(j=1,length(div), 
+   a=div[j]; c=-d/div[j]; 
+   if(gcd(gcd(f,b),c/core(c))==1,
+    aux=concat(aux,[[div[j], b , -d/div[j]]]);
+    if(Print,print("[a,b,c] = ",[div[j], b , -d/div[j]]));
+   );
+  );
+ );
+);
+return(aux);
+}
+
+{VolProtk(D,k, Print=0) = \\ Calculates the sum of a for all [a,b,c] such that D=b^2 - 4*k*a*c, a>0>c and gcd(f,b,c/c0)=1, where c0 is the squarefree part of c
+local(Prot);
+Prot=Protk(D,k,Print);
+return(sum(j=1,length(Prot),Prot[j][1]));
+}
+
+
+{Gamma(m)= \\ Volume of H/\Gamma_0(m)
+div=divisors(m);
+return(m*prod(j=1,length(div),if(isprime(div[j]),1+1/div[j],1) ));
+};
+
+{VolRed(D,k) =  \\ Calculates the sum of Vol(H/Gamma_0(m)) for all [ell,b,m] such that D=b^2 + 4*k*ell^2*m and gcd(f,b,ell)=1
+local(f,b,d,div,j,ell,aux,m);
+aux=[];
+f=coredisc(D,1)[2];
+for(b=-floor(sqrt(D)),floor(sqrt(D)),
+ if((D-b^2)%(4*k)==0 & D!=b^2, 
+  d=(D-b^2)/4/k; 
+  div=divisors(d);
+  for(j=1,length(div), ell=div[j];
+   if(d%(ell^2)==0 & gcd(gcd(b,ell),f)==1, \\ d=(D - e^2)/(4k) = ell^2*m
+    m=d/ell^2;
+    aux=concat(aux,[[b,ell,m]]);
+   )
+  )
+ )
+);
+return(sum(j=1,length(aux),Gamma(aux[j][3])));
+}
+
+\\ d=2500; D=d^2; print(CoefD(D)/25*e(d)); print(VolRed(D,6));
+
+\\ VolRed(d²,1) ~ e(d)
+\\ D=40000; for(j=D,D+20, d=j^2; f=coredisc(d,1)[2]; print(d," :  ",1.*VolRed(d,1)/e(j)) ) 
+\\  1600000000 :  0.999970000000
+\\  1600080001 :  0.999970000750
+\\  1600160004 :  0.999970001500
+\\  1600240009 :  0.999970002250
+
+\\\\
+
+coeff=read("ModForm");
+\\ for(j=2,length(coeff), if( issquare(coeff[j][2])!=1, d=coeff[j][2]; f=coredisc(d,1)[2]; print(coeff[j][2]," :  ",coeff[j][1]," - ",sum(h=1,length(divisors(f)), VolRed(d/(divisors(f)[h])^2,1))) )) 
+\\ for(j=2,length(coeff), if( issquare(coeff[j][2])==1, d=coeff[j][2]; f=coredisc(d,1)[2]; print(coeff[j][2]," :  ",coeff[j][1]+1/12," - ",sum(h=1,length(divisors(f)), VolRed(d/(divisors(f)[h])^2,1))) )) 
+\\ for(j=5000,5020, d=j^2; f=coredisc(d,1)[2]; print(d," :  ",1.*sum(h=1,length(divisors(f)), VolRed(d/(divisors(f)[h])^2,1))/sum(h=1,length(divisors(f)), e(j/(divisors(f)[h])))) ) 
+\\ for(j=5000,5020, d=j^2; f=coredisc(d,1)[2]; print(d," :  ",1.*VolRed(d,1)/e(j)) ) 
+
+
+C=read("ModForm6");
+\\ for(j=1,1000, if( issquare(j)!=1 & C[j+1]!=0, d=j; f=coredisc(d,1)[2]; print(j," :  ",C[j+1]," - ",sum(h=1,length(divisors(f)), VolRed(d/(divisors(f)[h])^2,6))) ))
+\\ for(j=1,1000, if( issquare(j)==1 & C[j+1]!=0, d=j; f=coredisc(d,1)[2]; print(j," :  ",C[j+1] +1/12," - ",sum(h=1,length(divisors(f)), VolRed(d/(divisors(f)[h])^2,6))) ))
+\\ for(j=4000,7200, if( issquare(j)==1 & C[j+1]!=0, d=j; f=coredisc(d,1)[2]; print(j," :  ",1.*(C[j+1] +1/12)/sum(h=1,length(divisors(f)), CoefD(d)/25*e(round(sqrt(d/(divisors(f)[h])^2))) )) ))
+
+
+
+
+\\ TEST TEST TEST
+{altVolProtk(D) =
+if(D%12==0, comp=1, if(D%24==1, comp=2, comp=3/2));  return(comp*2*3/5*eulercharX(D));
+}
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\ Imaginary Class Numbers \\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+imagh(C)={ \\ class number for imaginary quadratic
+       \\ order O_C. C discriminant, C < 0 !!!
+       \\ counting reduced quadratic forms (cf. Cohen, Alg. 5.3.5)
+  local(h,q);
+  h=0;
+  forstep (b=C%2,sqrt(abs(C)/3),2,
+    q=(b^2-C)/4;
+    for(a=b,sqrt(q),
+      if(a==0,next());
+      if(q%a==0 && gcd(a,gcd(b,q/a))==1,
+          if(a==b || a^2==q || b==0,h+=1,h+=2));
+    );
+  );
+  return(h);
+}
+
+units(C)={\\ number of units
+  if(C==-3,return(6));
+  if(C==-4,return(4));
+  return(2);
+}
+
+hh(C)={\\ divide by units
+\\\\\\\\\\ NOTE: This only seems relevant for D=12 \\\\\\\\\
+  return(2*imagh(C)/units(C));
+} 
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\ Cusps \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+cuspsmcm(D)={\\ cusps of W_D, same for W_D(6)
+          \\ cf. McMullen, splitting prototypes
+  local(n,c,h);
+  n=0;
+  if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+  forstep (e=D%2,sqrt(D),2,
+    fordiv((D-e^2)/4,b,
+      c=(D-e^2)/(4*b);
+      if(c+e<b && e!=0,h=2,if(c-e<b,h=1,next()));
+      for(a=0,gcd(b,c)-1,if(gcd(a,gcd(b,gcd(c,e)))==1,n+=h));
+    );
+  );
+  return(n);
+}
+
+magic(n,l)={\\ think of better name
+  local(r);
+  r=0;
+  for(a=1,n%l-1,if(gcd(a,l)==1,r+=1));
+  return(n\l*eulerphi(l)+r);
+}
+
+cuspsalt(D)={\\ direct gcd computation of cusps
+  local(n,c,m,f);
+  n=0;
+  if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+  forstep (e=D%2,sqrt(D),2,
+    fordiv((D-e^2)/4,b,
+      c=(D-e^2)/(4*b);
+      m=gcd(b,c);
+      f=gcd(m,e);
+      if(e==0,\\n+=gcd(b,c),n+=2*gcd(b,c)); \\ only fundamental!
+              n+=magic(m,f),n+=2*magic(m,f)); \\ general
+    );
+  );
+  return (n/2); \\ c+e<b
+}
+
+cusps(D)={return(cuspsalt(D));} \\ manchmal signifikant schneller...
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\ Euler Characteristic \\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+mysigma (n) = {\\ return sigma_1 for >0, -1/24 for 0
+  if (n==0, return (-1/24));
+  return(sigma(n));
+}
+
+H (D) = { \\ calculate H(2,D)
+  local(HH,e);
+  if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+  HH=0;
+  forstep (e=D%2,sqrt(D),2,
+    if (e==0, 
+      HH+=mysigma((D-e^2)/4),
+      HH+=2*mysigma((D-e^2)/4));
+  );
+  HH/=-5;
+  if (issquare(D),HH-=D/10);
+  return(HH);
+}
+
+eulercharX(D) = { \\ calculate chi(X_D)
+  local (DD,f,z,chi);
+  z=coredisc(D,1); 
+  DD=z[1]; f=z[2]; \\ split into fundamental discriminant and square
+  if(issquare(D), return(f^(3)/72*sum(j=1,length(divisors(f)),moebius(divisors(f)[j])/divisors(f)[j]^2)),
+  chi=sumdiv(f,r,kronecker(DD,r)*moebius(r)/r^2);
+  chi*=-H(DD)/12;
+  chi*=2*f^3;
+  return(chi););
+}
+
+
+eulercharXP(D) = { \\ calculate chi(X_D,(1,2))
+  local(DD,f,z);
+  if (D%8==5, return(0));
+  z=coredisc(D,1);
+  DD=z[1]; f=z[2];
+  if (f%2!=0, return(eulercharX(D)), return(3/2*eulercharX(D)));
+}
+
+kappa(D)={f=coredisc(D,1)[2]; if(gcd(6,f)==1, 1,if(gcd(6,f)==2, 3/2,if(gcd(6,f)==3, 4/3,2)))};
+
+eulercharX16(D)= { 
+  local(f);
+  f=coredisc(D,1)[2];
+  if(gcd(f,6)==1,fact=1,if(gcd(f,6)==2,fact=3/2,if(gcd(f,6)==3,fact=4/3,if(gcd(f,6)==6,fact=2))));
+  return(eulercharX(D)*fact);
+}
+
+
+
+eulercharg2(D) = { \\ chi(W_D) = -9 chi(X_D)  \\ = -9 zeta_{sqrt(D)}(-1) -9*lfun(x^2-D, -1) for fundamental discriminants
+  if(D<3,return(0));
+  return(-9/2*eulercharX(D));
+}
+
+
+eulercharg3(D) = { \\ chi(W_D(4) (genus 3)
+  local(chi);
+  chi=-5/2*eulercharXP(D);
+  if (D%8==1, return([chi,chi]), return(chi));
+}
+
+
+eulercharg4(D) =  { \\ chi(W_D(6)) (genus 4)
+  return (-7*eulercharX(D));
+}
+
+
+eulersqg2(d) = {
+  local(div);
+  div=divisors(d);
+  if(d%2==0, return(-1/16*d^2*(d-2)*sum(j=1,length(div),moebius(div[j])/div[j]^2)),  
+  return([-1/32*d^2*(d-1)*sum(j=1,length(div),moebius(div[j])/div[j]^2),-1/32*d^2*(d-3)*sum(j=1,length(div),moebius(div[j])/div[j]^2)]););
+}
+
+volsqg2(d) = {
+  local(div);
+  div=divisors(d);
+  if(d<3,return(0));
+  if(d%2==0, return(1/16*d^2*(d-2)*sum(j=1,length(div),moebius(div[j])/div[j]^2)),  
+  return(1/32*d^2*(d-1)*sum(j=1,length(div),moebius(div[j])/div[j]^2)+1/32*d^2*(d-3)*sum(j=1,length(div),moebius(div[j])/div[j]^2)););
+}
+
+eulerPrymg3(d) = {
+  if(d%8==1, return(2*eulercharg3(d)[1]), return(eulercharg3(d)));
+}
+
+
+eulerPrymg3(d) = {
+  if(d%8==1, return(eulercharg3(d)[1]), return(eulercharg3(d)));
+}
+
+
+
+eulercharg4(D) =  { \\ chi(W_D(6)) (genus 4)
+  if(D==4 || D==9, return(0), return (-7*eulercharX(D)));
+}
+
+
+
+/* 
+eulerGothic(D,Label=0) = { \\ NOT FOR SQUARE DISCRIMINANT!
+  local(comp,c,f,eps);
+  if(setsearch([0,1,4,9,12,16],D%24)==0, return(0),
+  f=coredisc(D,1)[2]; 
+  if(gcd(f,6)==1, c=1, if(gcd(f,6)==2, c=3/2, if(gcd(f,6)==3, c=4/3, if(gcd(f,6)==6, c=2)))); 
+  if(D%12==0, eps=4; comp=1, if(D%24==1, eps=1; comp=4, eps=2; comp=2)); 
+  if(Label==0, 
+  vol=-eps/12*VolProtk(D,6) + 1/20*c*VolProtk(D,1);
+  return(vol),
+  if(Label==1, 
+  vol= 1/20*c*VolProtk(D,1);
+  return(vol),
+  if(Label==2, 
+  vol=-eps/12*VolProtk(D,6);
+  return(vol);
+  )));
+  );
+ }
+*/
+
+eulerGothic(D) = {
+  local(comp,c,f,eps);
+  if(setsearch([0,1,4,9,12,16],D%24)==0, return(0),
+  f=coredisc(D,1)[2]; 
+  if(gcd(f,6)==1, c=1, if(gcd(f,6)==2, c=3/2, if(gcd(f,6)==3, c=4/3, if(gcd(f,6)==6, c=2)))); 
+  if(D%12==0, eps=4; comp=1, if(D%24==1, eps=1; comp=4, eps=2; comp=2)); 
+  \\vol=-eps/12*VolProtk(D,6) + 3/2*eulercharX16(D);
+  vol=-eps/12*VolRed(D,6) + 3/2*eulercharX16(D);
+  return(-vol););
+}
+
+
+
+eulerGothicPartial(D,Label=0) = { \\ FOR EACH COMPONENT
+  local(comp,c,f,eps);
+  if(setsearch([0,1,4,9,12,16],D%24)==0, return(0),
+  f=coredisc(D,1)[2]; 
+	  if(gcd(f,6)==1, c=1, if(gcd(f,6)==2, c=3/2, if(gcd(f,6)==3, c=4/3, if(gcd(f,6)==6, c=2)))); 
+  if(D%12==0, eps=4; comp=1, if(D%24==1, eps=1; comp=4, eps=2; comp=2)); 
+  if(Label==0, 
+  vol1=- 3/2*eulercharX16(D); vol2=eps/12*VolRed(D,6); return(vol1+vol2),  \\ vol2=eps/12*VolProtk(D,6); return(vol1+vol2),
+  if(Label==1,
+  vol1=- 3/2*eulercharX16(D); return(vol1),
+  if(Label==2,
+  vol2=eps/12*VolRed(D,6); return(vol2), \\ vol2=eps/12*VolProtk(D,6); return(vol2),
+  )));
+  );
+}
+
+
+eulerGothicPartialAlt(D,Label=0) = {
+  local(comp,c,f,eps);
+  if(setsearch([0,1,4,9,12,16],D%24)==0, return(0),
+  f=coredisc(D,1)[2]; 
+  if(gcd(f,6)==1, c=1, if(gcd(f,6)==2, c=3/2, if(gcd(f,6)==3, c=4/3, if(gcd(f,6)==6, c=2)))); 
+  if(D%12==0, eps=4; comp=1, if(D%24==1, eps=1; comp=4, eps=2; comp=2)); 
+  if(Label==0, 
+  vol1=- 3/2*eulercharX16(D); vol2=eps/12*VolRed(D,6); return(vol1+vol2),  \\ vol2=eps/12*CoefD(D)/25*e(round(sqrt(D))); return(vol1+vol2),
+  if(Label==1,
+  vol1=- 3/2*eulercharX16(D); return(vol1),
+  if(Label==2,
+  vol2=eps/12*CoefD(D)/25*e(round(sqrt(D))); return(vol2), \\ vol2=eps/12*VolProtk(D,6); return(vol2),
+  )));
+  );
+}
+
+
+
+\\\ USEFUL FUNCTIONS
+
+{comp(d)= \\ Number of components of G_D / ideals of norm 6
+ local(comp); if(d%6==0, comp=1, if(d%3==0, comp=2, if(d%2==0, comp=2, comp=4 ))); return(comp); }
+
+{coefXD(d)= \\ Coefficient of vol(X_D) in the formula for vol(G_D) WITH the 3/2 ONLY FOR ONE COMPONENT
+ local(c); if(d%6==0, c=3, if(d%3==0, c=2, if(d%2==0, c=9/4, c=3/2; ))); return(c); }
+
+{coefRed(d)= \\ Coefficient of vol(Red_D) in the formula for vol(G_D) WITH the 2
+ local(c); if(d%6==0, c=1/75, if(d%3==0, c=4/3/75, if(d%2==0, c=1/50, c=2/75 ))); return(c); }
+
+{coefe(d)= \\ Coefficient of vol(Red_D) in the formula for vol(G_D) WITH the 2
+ local(c); if(d%6==0, c=13/150, if(d%3==0, c=26/225, if(d%2==0, c=13/100, c=13/75 ))); return(c); }
+
+
+\\  (*)
+\\ for(d=17,50, D=d^2; print(D, " : ", eulerGothicPartial(D,1), " , " ,1/30*(coefXD(d)*e(d))));  \\ FOR EACH COMPONENT of G_D!
+\\ for(d=17,50, D=d^2; print(D, " : ", eulerGothicPartial(D,1), " , " ,(coefXD(d)*eulercharX(d^2))));  \\ FOR EACH COMPONENT of G_D!
+\\ for(d=17000,20000, D=d^2; print(D, " : ", comp(d)*eulerGothicPartial(D,2)*1./(coefRed(d)*e(d))));  \\ ALL COMPONENTS
+\\ for(d=17000,20000, D=d^2; print(D, " : ", comp(d)*eulerGothicPartial(D,1)*1./(coefXD(d)*comp(d)/30*e(d))));  \\ ALL COMPONENTS
+\\ for(d=17000,20000, D=d^2; print(D, " : ", comp(d)*eulerGothicPartial(D)*1./(coefe(d)*e(d))));  \\ ALL COMPONENTS
+
+
+eulerGothicTotal(D) = {
+  local(comp,c,f,eps);
+  if(setsearch([0,1,4,9,12,16],D%24)==0, return(0),
+  f=coredisc(D,1)[2]; 
+  if(gcd(f,6)==1, c=1, if(gcd(f,6)==2, c=3/2, if(gcd(f,6)==3, c=4/3, if(gcd(f,6)==6, c=2)))); 
+  if(D%12==0, eps=4; comp=1, if(D%24==1, eps=1; comp=4, eps=2; comp=2)); 
+  \\ vol=-eps/12*VolProtk(D,6) + 3/2*eulercharX16(D);
+  vol=-eps/12*VolRed(D,6) + 3/2*eulercharX16(D);
+  return(-comp*vol););
+}
+
+
+\\ USING e(d) according to the asymptotic equality in (*)
+alteulerGothic(D,Label=0) = { \\ FOR EACH COMPONENT
+  local(c,d,f,eps);
+  if(setsearch([0,1,4,9,12,16],D%24)==0 || issquare(D)==0, return(0),
+  d=round(sqrt(D));
+  if(Label==0, 
+  return(coefe(d)/comp(d)*e(d)),
+  if(Label==1,
+  return(coefXD(d)*e(d)/30),
+  if(Label==2,
+  return(coefRed(d)/comp(d)*e(d));
+  )));
+  );
+}
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\ Volumes \\\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+volHhyp(g) = { \\ formula from Athreya et al.
+  return(2*Pi^(2*g)/factorial(2*g+1)*doublefac(2*g-3)/doublefac(2*g-2));
+  }
+\\ volHhyp(2) == Pi^4/120
+
+volH2(D) = {
+  local(dim,g,n);
+  g=2; n=1;
+  dim=2*g+n-1;
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)), 6*sigma(divisors(d)[j])*volsqg2(d/divisors(d)[j]))));
+}
+
+volH2approx(D) = { \\ using the formula for chi(W_D) for non-square D
+  local(dim,g,n);
+  g=2; n=1;
+  dim=2*g+n-1;
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)), -6*sigma(divisors(d)[j])*eulercharg2( (d/divisors(d)[j])^2 ))));
+}
+
+	\\ THIS IS ACTUALLY:
+	 volH2series(D) = {
+		return(1/16/D^4*sum(d=1,D,sigma(d,3)-2*d*sigma(d,1)));
+	};
+	volH2_1(D) = {
+		return(1/16/D^4*sum(d=1,D,sigma(d,3)));
+	};
+	volH2_2(D) = {
+		return(1/16/D^4*sum(d=1,D,2*d*sigma(d,1)));
+	};
+
+\\ vH2=volH2approx(100000)
+vH2 = 40587992842146111531/400000000000000000000;
+\\ abs(8* vH2-Pi^4/120)
+\\ %133 = 1.74315595686 E-5
+
+
+volPrymg3(D) = {
+  local(dim,g,n);
+  dim=4; \\ dim(Prym locus) = 
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)), -6*sigma(divisors(d)[j])*eulerPrymg3( (d/divisors(d)[j])^2 ))));
+}
+
+\\ ? vP3=volPrymg3(1000000)
+\\ time = 4min, 43,982 ms.
+vP3 = 161060298709167224971623/1600000000000000000000000;
+vQ3=Pi^4*5/9;
+\\ abs(vP3*128-vQ3)
+
+
+volPrymg3(D) = {
+  local(dim,g,n);
+  dim=4; \\ dim(Prym locus) = 
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  if(divisors(d)[j]%2==0 & divisors(d)[j]/2%2==1,-6*sigma(d/divisors(d)[j])*eulerPrymg3( (divisors(d)[j]/2)^2 ) ) - 6*sigma(d/divisors(d)[j])*eulerPrymg3( (divisors(d)[j])^2 )   )));
+}
+\\ ? volPrymg3(500000)
+vP3 = 21139233286220561848033/300000000000000000000000;
+\\ vQ3/vP3
+\\ vP3-vQ3/2^8/3
+
+	\\ IS THIS THE SAME?
+	volP3series(D) = {
+	   dim= 4;
+	   return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+	   if(divisors(d)[j]%2==0, 6*sigma(d/divisors(d)[j])*15/4* eulercharX( (divisors(d)[j])^2 ) ) +
+	   if(divisors(d)[j]%2==1, 6*sigma(d/divisors(d)[j])*5/2*eulercharX( (divisors(d)[j])^2 ) ) +
+	   if(divisors(d)[j]%2==0 & divisors(d)[j]/2%2==1, 6*sigma(d/divisors(d)[j])*5/2*eulercharX( (divisors(d)[j]/2)^2 ) )   
+	   )));
+	}
+
+
+	P3series(D) = {
+	   dim= 4;
+	   return([
+	   6*8/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+	   sigma(d/divisors(d)[j])*5/2* eulercharX( (divisors(d)[j])^2 ) ) ) ,
+	   6*8/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+	   if(divisors(d)[j]%2==0, sigma(d/divisors(d)[j])*5/4*eulercharX( (divisors(d)[j])^2 ) ) ) ) , 
+	   6*8/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+	   if(divisors(d)[j]%2==0 & divisors(d)[j]/2%2==1, sigma(d/divisors(d)[j])*5/2*eulercharX( (divisors(d)[j]/2)^2 ) ) )) ]);
+	}
+	\\ P3s=P3series(100000);
+	P3s = [5637123934732123842223/12500000000000000000000, 1207962092754547647051/12500000000000000000000, 603975203760547380211/37500000000000000000000];
+	P3s[1]+P3s[2]+P3s[3] - vQ3/2^5/3;
+	\\ 2.87007466384 E-6
+	P3s[1] - Pi^4/2^3/3^3;
+	\\ 1.90073226233 E-6
+
+	f(D) = {
+		\\ return(2/9*6*8/D^4*5/2^3*sum(d=1,floor(D/2),sum(j=1,length(divisors(d)), m=divisors(d)[j]; sigma(d/m)*m^2*(m-1)*sum(k=1,length(divisors(2*m)), r=divisors(2*m)[k]; moebius(r)/r^2   ))))	 \\ OK
+		if(D==1, return(0),
+		return(6*8*15/2^5*sum(d=1,floor(D/2),sigma(d,3)) + 2*f(floor(D/2)))	)
+	};
+
+	f(D) = {
+		return(1/D^4*sum(d=1,D,sum(j=1,length(divisors(d)), m=divisors(d)[j]; if(m%2==0,sigma(d/m)/16*m^2*(m-2)*sum(k=1,length(divisors(m)), r=divisors(m)[k]; moebius(r)/r^2   )))))	 \\ OK
+	};
+
+volPrymg4(D) = {
+  local(dim,g,n);
+  dim=4; \\ dim(Prym locus) = 
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)), -6*sigma(divisors(d)[j])*eulerPrymg4( (d/divisors(d)[j])^2 ))));
+}
+
+\\ ? vP4=volPrymg4(1000000)
+vP4 = 631356581446054421273379/4000000000000000000000000;
+vQ4=Pi^4*28/135;
+\\ abs(vP4*128-vQ4)
+
+
+volPrymg4(D) = {
+  local(dim,g,n);
+  dim=4; \\ dim(Prym locus) = 
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)), if(divisors(d)[j]%2==0,-6*sigma(d/divisors(d)[j])*eulerPrymg4( (divisors(d)[j]/2)^2 )))));
+}
+
+\\ ? vP4=volPrymg4(500000)
+vP4 = 1479751518408609647537/150000000000000000000000;
+\\ vQ4/vP4
+
+volGothic(D) = {
+  local(eps,comp,dim);
+  dim=4; \\ dim(Gothic locus) = 4
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)), -6*sigma(divisors(d)[j])* eulerGothicTotal( (d/divisors(d)[j])^2 ))));
+}
+
+
+\\ THIS ONE IS GOOD
+volGothic(D) = {
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+  - 6*sigma(d/divisors(d)[j])*eulerGothic( (divisors(d)[j])^2 ) +
+  if(divisors(d)[j]%4==2,-6*sigma(d/divisors(d)[j])*eulerGothic( (divisors(d)[j]/2)^2 ) ) +
+  if((divisors(d)[j]%9==3 || divisors(d)[j]%9==6),-6*sigma(d/divisors(d)[j])*eulerGothic( (divisors(d)[j]/3)^2 ) ) +
+  if((divisors(d)[j]%36==6 || divisors(d)[j]%36==30),-6*sigma(d/divisors(d)[j])*eulerGothic( (divisors(d)[j]/6)^2 ) ) 
+  )));
+}
+altvolGothic(D, Label=0) = {
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+  - 6*sigma(d/divisors(d)[j])*alteulerGothic( (divisors(d)[j])^2, Label )/comp((divisors(d)[j])^2) +
+  if(divisors(d)[j]%4==2,-6*sigma(d/divisors(d)[j])*alteulerGothic( (divisors(d)[j]/2)^2 , Label )/comp((divisors(d)[j])^2) ) +
+  if((divisors(d)[j]%9==3 || divisors(d)[j]%9==6),-6*sigma(d/divisors(d)[j])*alteulerGothic( (divisors(d)[j]/3)^2 , Label )/comp((divisors(d)[j])^2) ) +
+  if((divisors(d)[j]%36==6 || divisors(d)[j]%36==30),-6*sigma(d/divisors(d)[j])*alteulerGothic( (divisors(d)[j]/6)^2 , Label )/comp((divisors(d)[j])^2) ) 
+  )));
+}
+
+  \\ ? D1=350000; D2= D1+500; V1=altvolGothic(D1); print(abs(V1-VV1)*1.);
+  \\ 1.81047422961 E-8
+  \\ time = 3min, 54,484 ms.
+  \\ ? V1
+  \\ %59 = 52088986697594602519297/1800750000000000000000000
+
+
+volGothicPartial(D, Label=0) = {
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+  - 6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j])^2 , Label ) +
+  if(divisors(d)[j]%4==2,-6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j]/2)^2  , Label) ) +
+  if((divisors(d)[j]%9==3 || divisors(d)[j]%9==6),-6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j]/3)^2  , Label) ) +
+  if((divisors(d)[j]%36==6 || divisors(d)[j]%36==30),-6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j]/6)^2  , Label) ) 
+  )));
+}
+
+  \\ ? OV13=volGothicPartial(3000000,1)
+  \\ time = 38min, 56,106 ms.
+  \\ %304 = 2861728629012423426098101/81000000000000000000000000
+
+  \\ Dist=1000;
+  \\ {for(a2=-15,5, print(a2);
+  \\ for(a3=-10,5,
+  \\ for(a5=-10,5,
+  \\ for(a7=-10,5,
+  \\ for(a11=-10,5,
+  \\ for(a13=-10,5,
+  \\ for(a17=-10,5,
+  \\ if(abs(Pi^4*2^a2*3^a3*5^a5*7^a7*11^a11*13^a13*17^a17- OV8) < Dist, Dist=abs(Pi^4*2^a2*3^a3*5^a5*7^a7*11^a11*13^a13*17^a17 - OV8); aux=[a2,a3,a5,a7,a11,a13,a17]; print(aux);)
+  \\ )))))));}
+
+
+
+
+
+
+\\ Computes the different summands of the X_D part of the volume 
+volGXD(D,Label=1, Filename="eulervector", rewrite=0, OS=1) = {
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 4
+  if(trap(,0,read(Filename);1), euler=read(Filename), euler=[]);
+  L=length(euler); if(L<D, euler=concat(euler,vector(D-L));
+  for(j=L+1,D,euler[j]=eulerGothicPartial(j^2,Label)); if(rewrite, if(OS==1, system("rm -f "Filename), system("del "Filename)); write(Filename,euler);););
+  print("  Finished calculating Euler characteristics.");
+  aux=[0,0,0,0];
+  for(d=1,D,for(j=1,length(divisors(d)),  
+    aux[1]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]]);
+  if(divisors(d)[j]%4==2,
+    aux[2]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/2]));
+  if((divisors(d)[j]%9==3 || divisors(d)[j]%9==6),
+    aux[3]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/3]));
+  if((divisors(d)[j]%36==6 || divisors(d)[j]%36==30),
+    aux[4]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/6])); 
+  ));
+  return(aux);
+}
+
+  \\ VX=volGXD(6000000, 1)
+  \\   Finished calculating Euler characteristics.
+  \\ time = 46min, 17,391 ms.
+  \\ %87 = [116890952173286484576488161/3456000000000000000000000000, 347889612266935373952167/288000000000000000000000000, 1498604002268864604582877/5184000000000000000000000000, 35680893792489637779151/3456000000000000000000000000]
+  \\ VX=volGXD(8000000)
+  \\   Finished calculating Euler characteristics.
+  \\ time = 1h, 6min, 8,485 ms.
+  \\ %157 = [110829928370511347201758203/3276800000000000000000000000, 19791053654475690003363623/16384000000000000000000000000, 4736321820419542056721879/16384000000000000000000000000, 21144351010363241354907/2048000000000000000000000000]
+  \\ VX == [Pi^4/(2^6*3^2*5), Pi^4/(2^8*3^2*5*7), Pi^4/(2^6*3^4*5*13), Pi^4/(2^8*3^4*5*7*13) ]
+  \\ VolX = = Pi^4*1711/4717440;  \\ == Pi^4 * (29 * 59) / ( 2^7 * 3^4 * 5 * 7 * 13 ) == Pi^4* (1/(2^6*3^2*5) + 1/(2^8*3^2*5*7) + 1/(2^6*3^4*5*13) + 1/(2^8*3^4*5*7*13))
+
+
+  \\ ? VR=volGXD(6000,2, "eulerRest")
+  \\   Finished calculating Euler characteristics.
+  \\ time = 29min, 42,568 ms.
+  \\ %862 = [-195493717459/32400000000000, -1276092359/7200000000000, -6732683281/144000000000000, -147540731/108000000000000]
+  \\ ? VR=volGXD(15000,2,"eulerR",1,0)
+  \\  Finished calculating Euler characteristics.
+  \\ time = 7h, 13min, 8,813 ms.
+  \\ %67 = [-50929600804099/8437500000000000, -8983326949141/50625000000000000, -1184315474833/25312500000000000, -69521697619/50625000000000000]
+
+
+
+
+volGXDAlt(D,Label=1, Filename="eulervector", rewrite=0, OS=1) = {
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 4
+  if(trap(,0,read(Filename);1), euler=read(Filename), euler=[]);
+  L=length(euler); if(L<D, euler=concat(euler,vector(D-L));
+  for(j=L+1,D,euler[j]=eulerGothicPartialAlt(j^2,Label)); if(rewrite, if(OS==1, system("rm -f "Filename), system("del "Filename)); write(Filename,euler);););
+  print("  Finished calculating Euler characteristics.");
+  aux=[0,0,0,0];
+  for(d=1,D,for(j=1,length(divisors(d)),  
+    aux[1]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]]);
+  if(divisors(d)[j]%4==2,
+    aux[2]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/2]));
+  if((divisors(d)[j]%9==3 || divisors(d)[j]%9==6),
+    aux[3]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/3]));
+  if((divisors(d)[j]%36==6 || divisors(d)[j]%36==30),
+    aux[4]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/6])); 
+  ));
+  return(aux);
+}
+
+  \\ VR4=volGXDAlt(1300000,2,"eulerRAlt",1,0)
+  \\  Finished calculating Euler characteristics.
+  \\ time = 6min, 30,047 ms.
+  \\ %147 = [-51732769077255608724817/8568300000000000000000000, -47548406682097364071/267759375000000000000000, -8020558055276811346909/171366000000000000000000000, -11794802445197259323/8568300000000000000000000]
+  \\ VRNew2=volGXDAlt(2000000,2,"eulerRAlt_2.10e6",1,0)
+  \\   Finished calculating Euler characteristics.
+  \\ time = 10min, 22,140 ms.
+  \\ %162 = [-5796184755875464896998857/960000000000000000000000000, -107475927687612011239469/960000000000000000000000000, -1123286050347596549173/24000000000000000000000000, -1321508018635929790993/960000000000000000000000000]
+  \\ VRNew4=volGXDAlt(10000000,2,"eulerRAlt_1.10e7",1,0)
+  \\ Finished calculating Euler characteristics.
+  \\time = 1h, 10min, 31,344 ms.
+  \\%182 = [-3622612103077885609089944363/600000000000000000000000000000, -106547379686177433433527919/600000000000000000000000000000, -28082250024528906959730413/600000000000000000000000000000, -412973332918630163331263/300000000000000000000000000000]
+
+
+
+volGothicPartial(D, Label=0) = {
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 
+  aux=[0,0,0,0];
+  aux[1]=1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+  - 6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j])^2 , Label ) ));
+  aux[2]=1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+  if(divisors(d)[j]%4==2,-6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j]/2)^2  , Label) ) ));
+  aux[3]=1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+  if((divisors(d)[j]%9==3 || divisors(d)[j]%9==6),-6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j]/3)^2  , Label) ) ));
+  aux[4]=1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)),  
+  if((divisors(d)[j]%36==6 || divisors(d)[j]%36==30),-6*sigma(d/divisors(d)[j])*eulerGothicPartial( (divisors(d)[j]/6)^2  , Label) ) ));
+  return(aux);
+}
+
+
+
+
+\\\\ LAST TRY 
+
+volaltGXD(D,Label=1, Filename="evector", rewrite=0, OS=1) = { \\ using e(d)
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 4
+  if(trap(,0,read(Filename);1), euler=read(Filename); print("  File successfully read"), euler=[]; print("  I could not read the file. Shame on me!"));
+  L=length(euler); if(L<D, euler=concat(euler,vector(D-L));
+  for(j=L+1,D,euler[j]=alteulerGothic(j^2,Label)); if(rewrite, if(OS==1, system("rm -f "Filename), system("del "Filename)); write(Filename,euler);););
+  print("  Finished calculating Euler characteristics.");
+  aux=[0,0,0,0];
+  for(d=1,D,for(j=1,length(divisors(d)),  
+    aux[1]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]]);
+  if(divisors(d)[j]%4==2,
+    aux[2]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/2]));
+  if((divisors(d)[j]%9==3 || divisors(d)[j]%9==6),
+    aux[3]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/3]));
+  if((divisors(d)[j]%36==6 || divisors(d)[j]%36==30),
+    aux[4]+=1/D^dim*(-6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/6])); 
+  ));
+  return(aux);
+}
+
+ \\ ? V1=volaltGXD(5000000,0,"evector_5.10e6",1)
+ \\   Finished calculating Euler characteristics.
+ \\ time = 30min, 23,176 ms.
+ \\ %93 = [-294337292331827280146071903/7500000000000000000000000000, -86569767496183711380777019/75000000000000000000000000000, -22816837459529500671329617/75000000000000000000000000000, -671086005604997618346139/75000000000000000000000000000]
+
+ \\ ? V3=volaltGXD(30000000,0,"evector_3.10e7",1)
+ \\   Finished calculating Euler characteristics.
+ \\ time = 4h, 5min, 41,437 ms.
+ \\ %116 = [-254307332649594568461496353143/6480000000000000000000000000000, -11219439914120097238494064747/9720000000000000000000000000000, -29570626414292115831561148591/97200000000000000000000000000000, -869724298440711455509777763/97200000000000000000000000000000]
+
+
+
+volmanGXD(D, Filename="ebasic", rewrite=0, OS=1) = { \\ using e(d), manual
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 4
+  if(trap(,0,read(Filename);1), euler=read(Filename); print("  File successfully read"), euler=[]; print("  I could not read the file. Shame on me!"));
+  L=length(euler); if(L<D, euler=concat(euler,vector(D-L));
+  for(j=L+1,D,euler[j]=e(j)); if(rewrite, if(OS==1, system("rm -f "Filename), system("del "Filename)); write(Filename,euler);););
+  print("  Finished calculating Euler characteristics.");
+  aux=[0,0,0,0];
+  for(d=1,D,for(j=1,length(divisors(d)),  
+  if(divisors(d)[j]%6==2 || divisors(d)[j]%6==4,
+    aux[1]+=13/25/D^dim*(-6/8*sigma(d/divisors(d)[j])*euler[divisors(d)[j]]));
+  if(divisors(d)[j]%6==3,
+    aux[1]+=13/25/D^dim*(-6/9*sigma(d/divisors(d)[j])*euler[divisors(d)[j]]));
+  if(divisors(d)[j]%6==1 || divisors(d)[j]%6==5,
+    aux[1]+=13/25/D^dim*(-6/12*sigma(d/divisors(d)[j])*euler[divisors(d)[j]]));
+  if(divisors(d)[j]%6==0,
+    aux[1]+=13/25/D^dim*(-6/6*sigma(d/divisors(d)[j])*euler[divisors(d)[j]]));
+  \\\\
+  if(divisors(d)[j]%12==2 || divisors(d)[j]%12==10,
+    aux[2]+=13/25/D^dim*(-6/12*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/2]));
+  if(divisors(d)[j]%12==6,
+    aux[2]+=13/25/D^dim*(-6/9*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/2]));
+  \\\\
+  if(divisors(d)[j]%18==3 || divisors(d)[j]%18==15,
+    aux[3]+=13/25/D^dim*(-6/12*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/3]));
+  if(divisors(d)[j]%18==6 || divisors(d)[j]%18==12,
+    aux[3]+=13/25/D^dim*(-6/8*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/3]));
+  \\\\
+  if(divisors(d)[j]%36==6 || divisors(d)[j]%36==30,
+    aux[4]+=13/25/D^dim*(-6/12*sigma(d/divisors(d)[j])*euler[divisors(d)[j]/6]));
+  ));
+  return(aux);
+}
+
+ \\ V1=volmanGXD(5000000,"ebasic_5.10e6",1)
+ \\   Finished calculating Euler characteristics.
+ \\ time = 1h, 6,610 ms.
+ \\ %95 = [-294337292331827280146071903/7500000000000000000000000000, -86569767496183711380777019/75000000000000000000000000000, -22816837459529500671329617/75000000000000000000000000000, -671086005604997618346139/75000000000000000000000000000]
+
+ \\  ExactVol = [ 17*43/2^7/3^4/7/5^2 , 43/2^8/3^4/7/5^2 , 17/2^7/3^5/5^2/7 , 1/2^8/3^5/5^2/7 ]
+ \\ print(Pi^4*sum(j=1,4,ExactVol[j]) )
+ \\ VolG= Pi^4*13/2^7/3^5
+
+
+volaltGXD_ord(D,Label=0, Filename="evector", rewrite=0, OS=1) = { \\ using e(d)
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 4
+  if(trap(,0,read(Filename);1), euler=read(Filename); print("  File successfully read"), euler=[]; print("  I could not read the file. Shame on me!"));
+  L=length(euler); if(L<D, euler=concat(euler,vector(D-L));
+  for(j=L+1,D,euler[j]=alteulerGothic(j^2,Label)); if(rewrite, if(OS==1, system("rm -f "Filename), system("del "Filename)); write(Filename,euler);););
+  print("  Finished calculating Euler characteristics.");
+  aux=[0,0,0,0];
+  for(m=1,D,for(d=1,D\m,  
+    aux[1]+=1/D^dim*(-6*sigma(d)*euler[m]);));
+  for(m=1,D\2,for(d=1,D\(2*m), 
+  if(m%2==1,
+    aux[2]+=1/D^dim*(-6*sigma(d)*euler[m]));));
+  for(m=1,D\3,for(d=1,D\(3*m), 
+  if((m%3==1 || m%3==2),
+    aux[3]+=1/D^dim*(-6*sigma(d)*euler[m]));));
+  for(m=1,D\6,for(d=1,D\(6*m), 
+  if(m%6==1 || m%6==5,
+    aux[4]+=1/D^dim*(-6*sigma(d)*euler[m]));)); 
+  return(aux);
+}
+
+
+
+
+
+
+volmanGXD_ord(D, Filename="ebasic", rewrite=0, OS=1) = { \\ using e(d), manual
+  local(dim,g,n);
+  dim=4; \\ dim(gothic locus) = 4
+  if(trap(,0,read(Filename);1), euler=read(Filename); print("  File successfully read"), euler=[]; print("  I could not read the file. Shame on me!"));
+  L=length(euler); if(L<D, euler=concat(euler,vector(D-L));
+  for(j=L+1,D,euler[j]=e(j)); if(rewrite, if(OS==1, system("rm -f "Filename), system("del "Filename)); write(Filename,euler);););
+  print("  Finished calculating Euler characteristics.");
+  aux=[0,0,0,0];
+  for(m=1,D,for(d=1,D\m,  
+  if(m%6==2 || m%6==4,
+    aux[1]+=13/25/D^dim*(-6/8*sigma(d)*euler[m]));
+  if(m%6==3,
+    aux[1]+=13/25/D^dim*(-6/9*sigma(d)*euler[m]));
+  if(m%6==1 || m%6==5,
+    aux[1]+=13/25/D^dim*(-6/12*sigma(d)*euler[m]));
+  if(m%6==0,
+    aux[1]+=13/25/D^dim*(-6/6*sigma(d)*euler[m]));));
+  \\\\
+  for(m0=1,D\2,for(d=1,D\(2*m0),  \\ m0=m/2
+  if(m0%6==1 || m0%6==5,
+    aux[2]+=13/25/D^dim*(-6/12*sigma(d)*euler[m0]));
+  if(m0%6==3,
+    aux[2]+=13/25/D^dim*(-6/9*sigma(d)*euler[m0]));));
+  \\\\
+  for(m0=1,D\3,for(d=1,D\(3*m0),  \\ m0=m/3
+  if(m0%6==1 || m0%6==5,
+    aux[3]+=13/25/D^dim*(-6/12*sigma(d)*euler[m0]));
+  if(m0%6==2 || m0%6==4,
+    aux[3]+=13/25/D^dim*(-6/8*sigma(d)*euler[m0]));));
+  \\\\
+  for(m0=1,D\6,for(d=1,D\(6*m0),  \\ m0=m/6
+  if(m0%6==1 || m0%6==5,
+    aux[4]+=13/25/D^dim*(-6/12*sigma(d)*euler[m0]));));
+  return(aux);
+}
+
+
+
+
+
+
+
+
+S(D,k)= sum(d=1,D,sumdiv(d,m, if(m%k==0, sigma(d\m)*e(m))));
+Sigma(D,k)= sum(d=1,D,sigma(d,k));
+
+D=50;
+S(D,6) -(144*S(D\6,1) +18*S(D\6,3) +48*S(D\6,2) +(72-18-48)*S(D\6,6) );
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/*
+
+
+Dist=1000; 
+{for(a2=-5,5, print(a2);
+ for(a3=-5,5,
+ for(a5=-5,5,
+ for(a7=-5,5,
+ for(a11=-3,3,
+ for(a13=-1,1,
+ for(a17=0-1,1,
+ if(abs(Pi^4/(2^8*3^2*5*7)*2^a2*3^a3*5^a5*7^a7*11^a11*13^a13*17^a17 - VX[4]) < Dist, Dist=abs(Pi^4/(2^8*3^2*5*7)*2^a2*3^a3*5^a5*7^a7*11^a11*13^a13*17^a17 - VX[4]); aux=[a2,a3,a5,a7,a11,a13,a17]; print(aux);)
+  )))))));}
+
+
+
+
+
+FFvolGothic(D) = {
+  local(eps,comp,dim,aux); aux=[];
+  dim=4; \\ dim(Gothic locus) = 4
+  for(d=1,D, aux=concat(aux,[ eulerGothicTotal(d^2) ]););
+  return(1/D^dim*sum(d=1,D,sum(j=1,length(divisors(d)), -6*sigma(divisors(d)[j])* aux[d/divisors(d)[j]])));
+}
+
+\\ ? FFvolGothic(1500)
+\\ time = 42min, 40,444 ms.
+vG = 255166803709/3375000000000;
+
+
+Cyl1(D) = {
+   local(div,h,aux);
+   aux=0;
+   for(N=1,D,div=divisors(N);
+   for(j=1,length(div), h=div[j];
+     for(p1=1,N/h-2,for(p2=1,N/h-p1-1, aux+=N/h;
+     ));
+   ););
+   return(aux/3);
+}
+
+Cyl2(D) = {
+   local(div1,div2,p1,p2,h1,h2,H2,aux);
+   aux=0;
+   for(N=1,D,
+   for(H1=1,N-1, H2=N-H1; div1=divisors(H1); div2=divisors(H2);
+     for(j=1,length(div1), p1=div1[j]; for(k=1,length(div2), p2=div2[k]-p1;
+       if(p2>0, aux+=p1*(p1+p2);
+       );
+     ););
+   ););
+   return(aux);
+}
+
+CDZor(D) = {
+   return(Cyl1(D)+Cyl2(D));
+}
+
+\\ for(D=3,10,print(CDZor(D) - 6*sum(d=1,D,volsqg2(d))));
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\ Points of order 2 \\\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\\\\\\\ genus 2 for comparison \\\\\\\\\\\\
+
+mukamel(D)={
+  if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+  if (D%16==4,return(0));
+  if (D%16==0,return(1/2*(hh(-D)+2*hh(-D/4))));
+  if (D%16==8,return(1/2*hh(-D)));
+  if (D%16==12,return(1/2*(hh(-D)+3*hh(-D/4))));
+  return(1/2*hh(-4*D));
+}
+
+mukE(D)={ \\ alternative by counting E^pr
+  local(p,q,f,g);
+  p=0;
+  if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+  forstep(e=D%2,sqrt(D),2,
+    q=(D+e^2)/2;
+    forstep(c=e,sqrt(q),2,
+      if(c==0,next());
+      if(q%c!=0,next());
+      g=gcd(e,gcd(c,q/c));
+      fordiv(g,f, \\ primitive
+        if(f>1 && ((D/f^2)%4==0 || (D/f^2)%4==1)
+           && (D/f^2)%2 == (e/f)%2 == (c/f)%2 == ((q/c)/f)%2,
+              next(2)); 
+      );
+      if(c%2!=(q/c) % 2,next());
+      if(e==0 || e==c || c^2==q, p+=1, p+=2);
+    );
+  );
+  return(p);
+}
+
+pointsg2(D)={return(mukE(D));} \\ seems faster...
+
+\\\\\\\\ genus 4 \\\\\\\\\\\\\\\\\\\\\\\\\\
+
+e2(D)={
+	local(e);
+	e=0;
+	if(D%4==1,return(e));
+	e+=hh(-D);
+	if(D/4%4==3, return(e+hh(-D/4)), return(e));
+}
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\\ points of order 3 \\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+count_e3_0_orig(D)={ \\ much slower!
+	local(e,d,s);
+	s=0;
+	if(D%4!=0, print("Error! Need D%4==0. Got ",D); return(0));
+	d=D/4;
+	for(a=0,sqrt(d),
+		for(j=0,sqrt((D-4*a^2)/3),
+			for(i=0,(sqrt(D-4*a^2-3*j^2)+j)/2,
+				if(gcd([a,i,j])>1,next()); \\ properness for "real" 0mod4
+				\\if(a==1 && gcd(i,j) > 1 && gcd(i,j)%2==0,next());
+				\\if(d%4==0,if(gcd([a,i,j])>1,next()),if(gcd([a,i,j])>2,next()));
+				e=0;
+				if(i*j!=0, 
+					if(a^2+i^2-i*j+j^2==d,e+=2);
+					if(a^2+i^2+i*j+j^2==d,e+=2),
+					\\ d ist not a square! I.e. not both i and j are 0
+					if(a^2+i^2+j^2==d,e+=2));
+				if(a!=0, s+=2*e, s+=e);
+				\\if(e>1,print([a,i,j]));
+			);
+		);
+	);
+	return(s/12);
+}
+
+count_e3_0(D)={ \\ significantly faster!
+	local(e,d,s,i,q,f);
+	s=0;
+	if(D%4!=0, print("Error! Need D%4==0. Got ",D); return(0));
+	d=D/4;
+	for(a=0,sqrt(d),
+		for(j=0,sqrt((D-4*a^2)/3),
+			e=0;
+			q=D-4*a^2-3*j^2;
+			if(!issquare(q),next());
+			i=sqrtint(q)+j;
+			if(i%2==1,next());
+			i/=2;
+			f=gcd([2*a,i,j]);
+			if(f>1, next()); \\ properness
+			if(i*j!=0,
+				if(q==0,e+=2,e+=4),
+				e+=2);
+			if(a!=0, s+=2*e, s+=e);
+			\\if(e>1,print([2*a,i,j])); \\ debug
+		);
+	);
+	return(s/12);
+}
+
+count_e3_1(D)={
+	local(e,d,s,i,f,q);
+	s=0;
+	if(D%4!=1, print("Error! Need D%4==1. Got ",D); return(0));
+	d=(D-1)/4;
+	for(a=0,(1+sqrt(D))/2,
+		for(j=0,sqrt((D-(2*a-1)^2)/3),
+			e=0;
+			q=D-(2*a-1)^2-3*j^2;
+			if(issquare(q), \\ a>0
+				i=sqrtint(q)+j;
+				if(i%2==0,
+					f=gcd([2*a-1,j,i]);
+					if(f==1,  \\ proper (a>0)
+						if(i*j==0,if(i==j, e+=1,e+=2),if(i==j,e+=2,e+=4)))));
+			q=D-(2*a+1)^2-3*j^2; \\ -a
+			if(a!=0 && issquare(q),
+				i=sqrtint(q)+j;
+				if(i%2==0,
+					f=gcd([2*a+1,j,i]);
+					if(f==1, \\ proper (a<0)
+						if(i*j==0,if(i==j, e+=1,e+=2),if(i==j,e+=2,e+=4)))));
+			\\if(e>1,print([a,i,j],[2*a-1,j,i-j])); \\ debug
+			s+=e;
+		);
+	);
+	return(s/12);
+}
+
+count_e3_1faster(D)={
+	local(e,s,i,q);
+	s=0;
+	if(D%4!=1, print("Error! Need D%4==1. Got ",D); return(0));
+	forstep(a=1,sqrt(D),2,
+		for(j=0,sqrt((D-a^2)/3),
+			e=0;
+			q=D-a^2-3*j^2;
+			if(issquare(q),
+				i=sqrtint(q)+j;
+				if(i%2==0,
+					if(gcd([a,j,i])==1,
+						if(i*j==0,
+							if(i==j, e+=1,e+=2),
+							if(i==j, e+=2,e+=4)))));
+			if(a==0, s+=e, s+=2*e);
+		);
+	);
+	return(s/12);
+}
+	
+
+teste3(D)={ \\ slower but uniform!
+	local(s,i,e);
+	s=0;
+	forstep(a=D%2,sqrt(D),2,
+		for(j=0,sqrt(D-a^2),
+			e=0;
+			q=D-a^2-3*j^2;
+			if(issquare(q),
+				i=sqrtint(q)+j;
+				if(i%2==0 && gcd([a,j,i/2])==1,
+					if(i*j!=0,
+						if(q==0,e+=2,e+=4),
+						e+=2);
+					if(a!=0, s+=2*e, s+=e);
+					\\if(e>0,print([a,i,j]));
+				);
+			);
+		);
+	);
+	return(s/12);
+}
+
+count_e3(D)={
+	local(e,s,i,q);
+	s=0;
+	forstep(a=D%2,sqrt(D),2,
+		for(j=0,sqrt((D-a^2)/3),
+			e=0;
+			q=D-a^2-3*j^2;
+			if(issquare(q),
+				i=sqrtint(q)+j;
+				if(i%2==0,
+					if(gcd([a,j,i/2])==1,
+						if(i*j==0,
+							if(i==j, e+=1,e+=2),
+							if(i==j, e+=2,e+=4)))));
+			if(a==0, s+=e, s+=2*e);
+		);
+	);
+	return(s/12);
+}
+
+e3(D)={
+	if(D%4==0, return(count_e3_0(D)), return(count_e3_1(D)));
+}
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\\ signature \\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\\\\\\\\\ genus 2 for comparison \\\\\\\\\\
+
+signatureg2(D) = { \\ signature of W_D for genus 2
+  local(chi,p2,c,g);
+  if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+  if ( issquare(D), print("Square Discriminants not permitted!"); return());
+  chi=eulercharg2(D);
+  c=cusps(D);
+  if(D==5,return([D,0,1,c,chi]));
+  if(D==8,return([D,0,0,c,chi]));
+  p2=pointsg2(D);
+  if(D%8==1,chi*=1/2;c*=1/2;p2*=1/2;);
+  g=2-chi-c-p2/2;
+  g*=1/2;
+  return([D,g,p2,c,chi]);
+}
+
+\\\\\\\ genus 4 \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+signatureg4(D) = {
+	local(chi,c,p2,p3,g);
+	if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+	if ( issquare(D), print("Square Discriminants not permitted!"); return());
+	chi=eulercharg4(D);
+	c=cusps(D);
+	p2=e2(D);
+	p3=e3(D);
+	g=1-chi/2-c/2-p2/4-p3/3;
+	return([D,g,p2,p3,c,chi]);
+}
+
+genusg4(D)={
+	local(v);
+	v=signatureg4(D);
+	return(v[2]);
+}
+
+signatureg4_fast(D)={
+	\\ the idea is to compute everything at the same time
+	\\ it turns out that this is not faster!!! :/
+	local(chi,cusps,p2,p3,g,HH,DD,z,f,c,m,n,C,h,q,i,j,q1,q2,q3,qq1);
+	if ( (D%4!=0) && (D%4!=1) || issquare(D), print("Invalid Discriminant!"); return());
+
+	z=coredisc(D,1); 
+  	DD=z[1]; f=z[2]; \\ split into fundamental discriminant and square
+
+	HH=0; cusps=0;
+  	C=-D; p2=0; p3=0;
+
+  	forstep(a=D%2,sqrt(D)+2*(D%4),2,
+		\\ determine length of internal loop
+		if(D%4==0,
+			if(a^2<=D/3, q1=(a^2-C)/4, q1=0); \\ class number
+  			q2=(D-a^2)/3, \\ points of order 3
+  			q1=0; \\ no class numbers
+  			q2=(D-(a-2)^2)/3;
+  		);
+		q3=(D-a^2)/4;
+
+  		for(b=0,sqrt(max(q1,max(q2,q3))),
+
+  			\\ euler characteristic and cusps
+  			if(b!=0 && b^2 <= q3 && a^2 < D && q3 % b == 0,
+		    	c=q3/b;
+				m=gcd(b,c);
+      			n=gcd(m,a);
+    			if (a==0, 
+      				if(b%f^2==0,HH+=b/f^2); 
+      				if(c%f^2==0,HH+=c/f^2);
+      				if(b==c,cusps+=magic(m,n),cusps+=2*magic(m,n)),
+     				if(b%f^2==0,HH+=2*b/f^2);
+     				if(b!=c && c%f^2==0,HH+=2*c/f^2);
+     				if(b==c,cusps+=2*magic(m,n),cusps+=4*magic(m,n));
+     			);
+     		);
+     			
+  		  	if(D%4==0, \\ D%4==0: Points of order 2 and 3
+  		  		h=0;
+  				if(b>=a && b!=0 && b^2 <= q1, \\ class number of -D
+  					if(q1%b==0 && gcd([a,b,q1/b])==1,
+          				if(a==b || b^2==q1 || a==0,h+=1,h+=2);
+          			);
+          		);
+          		p2+=2*h/units(-D);
+          		
+          		if(D/4%4==3 \\ add points of -D/4 in this case
+          			&& (a+1)^2 <= D/12 && b>=a+1 && b!=0, \\ a is off by 1 now!
+          				h=0;
+          				qq1=((a+1)^2-C/4)/4;
+          				if (b^2 <= qq1 && qq1%b==0 && gcd([a+1,b,qq1/b])==1,
+          					if(a+1==b || b^2==qq1,h+=1,h+=2);
+          				);
+          				p2+=2*h/units(-D/4);
+          		);
+ 
+ 			    j=b;
+          		q=D-a^2-3*j^2;
+			    if(b^2 <= q2 && issquare(q), \\ points of order 3
+			    	e=0;
+					i=sqrtint(q)+j;
+					if(i%2==0 && gcd([a,i/2,j]) == 1,
+						if(i*j!=0,
+							if(q==0,e+=2,e+=4),
+							e+=2);
+						if(a!=0, p3+=2*e, p3+=e);
+					);
+				),
+				\\ D%4==1: Points of order 3 only
+				if(b^2 <= q2,
+					j=b;				
+					q=D-a^2-3*j^2;
+					e=0;
+					if(issquare(q), \\ a>0
+						i=sqrtint(q)+j;
+						if(i%2==0,
+							if(gcd([a,j,i])==1,  \\ proper (a>0)
+								if(i*j==0,if(i==j, e+=1,e+=2),if(i==j,e+=2,e+=4))));
+					);
+					p3+=2*e;
+				);
+			);
+		);
+	);
+
+	\\ cusps
+	cusps/=2;
+	
+	\\ euler characteristic
+  	chi=sumdiv(f,r,kronecker(DD,r)*moebius(r)/r^2);
+  	chi*=f^3;
+  	chi*=-7/30*HH;
+  	
+  	\\ points of order 3
+  	p3 /= 12;
+  	
+	g=1-chi/2-cusps/2-p2/4-p3/3;
+	return([D,g,p2,p3,cusps,chi]);
+}
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+printsignature(D)={
+	local(v);
+	v=signatureg4(D);
+	for(i=1,6,print1(v[i],"\t"));print();
+}
+
+printsignatureuntil(n=100)={
+	print("Signature for W_D(6) for non-square discriminant up to ",n);
+	print("D\tg\tp2\tp3\tc\tchi");
+	forstep(D=4,n,[1,3],
+		if(issquare(D),next());
+		printsignature(D);
+	);
+}
+
+printsignatureuntil_tex(n=300)={
+	local(v);
+	print("D&g&\\chi&c&p_2&p_3&p_5&p_6\\\\");
+	forstep(D=5,n,[3,1],
+		if(issquare(D),next());
+		v=signatureg4(D);
+		\\for(i=1,5,print1("$",v[i],"$&"));print("$",v[6],"$\\\\");
+		print1("$",D,"$&$",v[2],"$&$",v[6],"$&$",v[5],"$&$",v[3],"$&$",v[4],"$");
+		\\print1("&&");
+		print("\\\\");
+	);
+}
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\ tests \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\\\\\\\ test if there are only order 3 points left
+testsig(D)={
+	local(chi,c,p2);
+	if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+	if ( issquare(D), print("Square Discriminants not permitted!"); return());
+	chi=eulercharg4(D);
+	c=cusps(D);
+	p2=e2(D);
+	return(1-chi/2-c/2-p2/4);
+}
+
+testsiguntil(n=500)={ \\ 5 is weird, but I guess we knew that
+	local(g);
+	forstep(D=8,n,[1,3],
+		if(issquare(D),next());
+		g=testsig(D);
+		if(denominator(3*g)!=1,print("D=",D," ",g));
+	);
+}
+
+finde3(D)={
+	local(chi,c,p2,s);
+	if ( (D%4!=0) && (D%4!=1), print("Invalid Discriminant!"); return());
+	if ( issquare(D), print("Square Discriminants not permitted!"); return());
+	chi=eulercharg4(D);
+	c=cusps(D);
+	p2=e2(D);
+	s=1-chi/2-c/2-p2/4;
+	return(denominator(s));
+}
+
+finde3until(n=100)={
+	local(d);
+	forstep(D=8,n,[1,3],
+		if(issquare(D),next());
+		d=finde3(D);
+		if(d!=1,print("D=",D," ",d));
+	);
+}
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+
+\\\\\\ print/test that genus is integral and positive for fund. discr.
+
+printnonproperuntil(n=100)={
+	forstep(D=4,n,[1,3],
+		if(!isfundamental(D),next());
+		print(D," ",e3(D)," ",genusg4(D));
+	);
+}
+
+testnonproperuntil(n=1000)={
+	local(g,c,t);
+	print("Testing all fundamental discriminants up to ",n," for integral positive genus.");
+	c=0; t=0;
+	forstep(D=4,n,[1,3],
+		if(!isfundamental(D),next());
+		c+=1;
+		g=genusg4(D);
+		if(denominator(g)!=1 || g<0, t+=1; print("D=",D," g=",g));
+	);
+	print("From ",c," discriminants tested, ",t," failed.");
+}
+
+testnonoddcorediscuntil(n=1000)={
+	local(c,t,g,v);
+	print("Testing all non-square discriminants that are fundamental or have an even core discriminant up to ",n," for integral positive genus.");
+	c=0;t=0;
+	forstep(D=4,n,[1,3],
+		if(issquare(D),next());
+		if(!isfundamental(D) && coredisc(D)%4==1,next());
+		c+=1;
+		g=genusg4(D);
+		if(denominator(g)!=1 || g<0,
+			v=coredisc(D,1);
+			print(D," ",v," ",e3(D)," ",g);
+			t+=1;
+		);
+	);
+	print("From ",c," discriminants tested, ",t," failed.");
+}
+
+testevenuntil(n=200)={
+	local(c,t,g,v);
+	print("Testing all even non-square discriminants up to ",n," for integral positive genus.");
+	c=0;t=0;
+	forstep(D=4,n,4,
+		if(issquare(D),next());
+		c+=1;
+		g=genusg4(D);
+		if(denominator(g)!=1 || g<0,
+			v=coredisc(D,1);
+			print(D," ",v," ",e3(D)," ",g);
+			t+=1;
+		);
+	);
+	print("From ",c," discriminants tested, ",t," failed.");
+}
+
+testuntil(n=100)={
+	local(c,t,g,v);
+	print("Testing all non-square discriminants up to ",n," for integral positive genus.");
+	c=0;t=0;
+	forstep(D=4,n,[1,3],
+		if(issquare(D),next());
+		c+=1;
+		g=genusg4(D);
+		if(denominator(g)!=1 || g<0,
+			v=coredisc(D,1);
+			print(D," ",v," ",e3(D)," ",g);
+			t+=1;
+		);
+	);
+	print("From ",c," discriminants tested, ",t," failed.");
+}
+	
+
+
+\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+\\\\\\ asymptotics tests
+
+
+e3nogcd(D)={ \\ solutions of quadratic form for MF analysis
+    local(s,i,e);
+	s=0;
+	forstep(a=D%2,sqrt(D),2,
+		for(j=0,sqrt(D-a^2),
+			e=0;
+			q=D-a^2-3*j^2;
+			if(issquare(q),
+				i=sqrtint(q)+j;
+				if(i%2==0,\\ && gcd([a,j,i/2])==1,
+					if(i*j!=0,
+						if(q==0,e+=2,e+=4),
+						if(i==j,e+=1,e+=2));
+					if(a!=0, s+=2*e, s+=e);
+					\\if(e>0,print([a,i,j]));
+				);
+			);
+		);
+	);
+	return (s);
+}
+
+e3nogcdps(n=20)={ \\ solutions of quadratic form for MF analysis as PS
+  local(f);
+  f=0;
+  for(D=0,n,
+	f+=e3nogcd(D)*'x^D;
+  );
+  return(f+O('x^(n+1)));
+}
+
+searchconst(N=5000)={ \\ find max of e3(D)/D^3/4
+  local(m,M,DD);
+  M=0;
+  for(D=100,N,
+    m=e3nogcd(D)/D^(3/4);
+    if (m>M,M=m; DD=D);
+  );
+  return([DD,M]);
+}
+
+FD(f)={ \\ upper bound for F(D)?
+  local(r);
+  r=1;
+  fordiv(f,p,if(isprime(p),r*=(1+1/p^2)));
+  return(r);
+}
+
+testbounds(N)={\\ test upper and lower bounds for D<N
+  local(g,u,l);
+  forstep(D=5,N,[3,1],
+    if(issquare(D),next()); 
+    g=genusg4(D); 
+    u=1+D^(3/2)*35/(48*Pi^2); 
+    l=3/200*D^(3/2)-D/6-D^(3/4)-150; 
+    if(g<l || g>u, print(D," ",u," ",g," ",l))
+  );
+}
+*/
